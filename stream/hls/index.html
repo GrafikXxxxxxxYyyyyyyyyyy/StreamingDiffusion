@@ -1,0 +1,92 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>StreamingDiffusion</title>
+<style>
+  :root { color-scheme: dark; --bg:#0d0b12; --fg:#efe9f5; --dim:#9b93a8; --accent:#ff5ea8; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
+         font:14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width:1000px; margin:0 auto; display:flex; gap:20px; flex-wrap:wrap; }
+  .player { flex:1 1 360px; min-width:0; }
+  video { width:100%; max-width:100%; background:#000; border-radius:10px; display:block; }
+  .side { flex:1 1 260px; min-width:0; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:var(--dim); margin:0 0 16px; }
+  .stat { display:flex; justify-content:space-between; gap:12px;
+          padding:7px 0; border-bottom:1px solid #241f2e; }
+  .stat b { font-variant-numeric:tabular-nums; font-weight:600; }
+  .ok { color:#64d99a; } .warn { color:#ffcc66; } .bad { color:#ff6b6b; }
+  form { display:flex; gap:8px; margin:16px 0 0; }
+  input { flex:1; min-width:0; padding:9px 11px; border-radius:8px;
+          border:1px solid #352d44; background:#171320; color:var(--fg); }
+  button { padding:9px 14px; border:0; border-radius:8px; background:var(--accent);
+           color:#1a0b12; font-weight:600; cursor:pointer; }
+  .note { color:var(--dim); font-size:12px; margin-top:10px; }
+</style>
+<div class="wrap">
+  <div class="player">
+    <video id="v" controls autoplay muted playsinline></video>
+  </div>
+  <div class="side">
+    <h1>StreamingDiffusion</h1>
+    <p class="sub">Бесконечный стрим, LTX-Video 2B distilled</p>
+    <div class="stat"><span>кусков сгенерировано</span><b id="chunks">—</b></div>
+    <div class="stat"><span>последний G</span><b id="g">—</b></div>
+    <div class="stat"><span>буфер</span><b id="buf">—</b></div>
+    <div class="stat"><span>простоев</span><b id="stalls">—</b></div>
+    <div class="stat"><span>смен сцены</span><b id="scene">—</b></div>
+    <div class="stat"><span>отклонено фильтром</span><b id="rej">—</b></div>
+    <div class="stat"><span>в эфире</span><b id="up">—</b></div>
+    <form id="f">
+      <input id="p" placeholder="что показать дальше…" autocomplete="off">
+      <button>Отправить</button>
+    </form>
+    <p class="note" id="msg"></p>
+    <p class="note" id="cur"></p>
+    <p class="note">Запрос попадёт в кадр через один-два куска.</p>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<script>
+const v = document.getElementById("v"), src = "stream.m3u8";
+if (v.canPlayType("application/vnd.apple.mpegurl")) { v.src = src; }
+else if (window.Hls && Hls.isSupported()) {
+  const hls = new Hls({ liveSyncDurationCount: 3 });
+  hls.loadSource(src); hls.attachMedia(v);
+  hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) setTimeout(() => hls.loadSource(src), 2000); });
+}
+const set = (id, val, cls) => {
+  const el = document.getElementById(id); el.textContent = val; el.className = cls || "";
+};
+async function tick() {
+  try {
+    const s = await (await fetch("status", { cache: "no-store" })).json();
+    set("chunks", s.chunks);
+    set("g", s.last_G == null ? "—" : s.last_G + " c");
+    set("buf", s.buffer, s.buffer > 0 ? "ok" : "warn");
+    set("stalls", s.stalls, s.stalls ? "bad" : "ok");
+    set("scene", s.scene);
+    set("rej", s.rejected, s.rejected ? "warn" : "");
+    const m = Math.floor(s.uptime / 60), sec = s.uptime % 60;
+    set("up", m + " мин " + String(sec).padStart(2, "0") + " с");
+    document.getElementById("cur").textContent = s.prompt ? "сейчас: " + s.prompt : "";
+  } catch (e) {}
+}
+tick(); setInterval(tick, 2000);
+document.getElementById("f").onsubmit = async (e) => {
+  e.preventDefault();
+  const i = document.getElementById("p");
+  if (!i.value.trim()) return;
+  const msg = document.getElementById("msg");
+  const r = await fetch("prompt?text=" + encodeURIComponent(i.value.trim()));
+  if (r.status === 422) {
+    const d = await r.json().catch(() => ({ reason: "отклонено" }));
+    msg.textContent = d.reason; msg.className = "note bad";
+  } else {
+    msg.textContent = "принято, появится через один-два куска"; msg.className = "note ok";
+    i.value = "";
+  }
+  setTimeout(() => { msg.textContent = ""; }, 6000);
+};
+</script>
